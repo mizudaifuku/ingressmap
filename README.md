@@ -3,6 +3,41 @@ Ingress Damage Reports Map
 
 ### What is this?
 
+This is a fork from https://github.com/Sabara/ingressmap .
+
+What have been changed include:
+ * Bigger storage for who have reports more than 10k (IndexedDB instead of localStorage)
+ * Smaller map icons
+ * URL parameters to specify initial map location and zoom
+   * `ll=35.681382,139.766084&z=15`
+ * URL parameter to specify how many email threads to take
+   * `limit=10` (multiple of 100)
+   * Use this to populate your initial database
+     * limit=200 (to take 20,000 threads from your damage reports)
+ * New From address `ingress-support@nianticlabs.com` is recognized
+
+The original `README.md` follows...
+
+### これは何か?
+
+Sabara55さんのingressmapのフォークです: https://github.com/Sabara/ingressmap
+
+変更点:
+ * データベースをより大容量に(レポート数が1万を超えても平気です。IndexedDBを使っています)
+ * マップ上のアイコンを少し小さく
+ * URLパラメータで起動時のマップ中心位置およびズームを指定できます
+   * `ll=35.681382,139.766084&z=15`
+ * URLパラメータでメールスレッド取得数を指定できます
+   * `limit=10` (かける100)
+   * 初回起動時はこれを使って、データベースを読み込んでください
+     * limit=200 (ダメージレポートから2万スレッドを読む場合)
+ * ダメージレポート送信者の変更に対応しています(`ingress-support@nianticlabs.com`)
+
+以下、オリジナルのREADMEです。
+
+
+### What is this?
+
 A web application to show portals on Google Maps by analyzing Ingress Damage Report mails.
 
 This page can show portals that you have owned once (~= UPC), damage frequency by agents, hours and days. 

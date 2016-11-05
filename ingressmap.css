@@ -64,7 +64,7 @@ body {
 }
 
 .portal_img {
-	max-width: 80px;
+	max-width: 80px !important;
 }
 
 table {

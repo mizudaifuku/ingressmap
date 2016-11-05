@@ -25,11 +25,15 @@ var clientId = '18011919441-dhpckpmlmfsrldtlaorfdp1khba4pgbh.apps.googleusercont
 var scopes = 'https://www.googleapis.com/auth/gmail.readonly';
 var userId = 'me';
 var maxResults = 100;
-var q = 'subject:"Ingress Damage Report: Entities attacked by" from:ingress-support@google.com';
+var q = 'subject:"Ingress Damage Report: Entities attacked by" ( from:ingress-support@google.com OR from:ingress-support@nianticlabs.com )';
 var maxLoop = 100;
 var parserDebug = false;
-var version = '0.2';
 var maxEnemyNames = 20;
+
+// initial map center and zoom.  Tokyo Station at z15
+var lat = 35.681382;
+var lng = 139.766084;
+var zoom = 15;
 
 ///
 /// global variable
@@ -40,32 +44,38 @@ var infoWindows = [];
 var upcCount = 0;
 var openedInfoWindow = null;
 
+var reportsDB = {};
+var portalsDB = {};
+var db = null;
+var dbName = 'damageReport';
+var version = 2;
 
 ///
 /// main
 ///
 $(document).ready(function() {
-	initLocalStorage();
+  showMessage("Loading datadase");
 
-	disablePOIInfoWindow();
+  parseOptions();
 
-	// printLocalStorage();
+  initLocalStorage(function(){
+    disablePOIInfoWindow();
 
-	// (35.681382, 139.766084) == Tokyo Station
-	var mapOpt = { center: { lat: 35.681382, lng: 139.766084 }, zoom: 10, mapTypeId: google.maps.MapTypeId.ROADMAP, panControl: false, zoomControl: true, zoomControlOptions: { style: google.maps.ZoomControlStyle.LARGE, position: google.maps.ControlPosition.RIGHT_CENTER }, streetViewControl: true, streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER } };
-	// http://stackoverflow.com/questions/8483023/uncaught-typeerror-cannot-set-property-position-of-undefined
-	googleMap = new google.maps.Map($('#map_canvas')[0], mapOpt); // !!! global
-	// http://googlemaps.googlermania.com/google_maps_api_v3/ja/map_example_singleInfoWindow.html
-	google.maps.event.addListener(googleMap, 'click', function(event) { closeInfoWindow(); });
+    var mapOpt = { center: { lat: lat, lng: lng }, zoom: zoom, mapTypeId: google.maps.MapTypeId.ROADMAP, panControl: false, zoomControl: true, zoomControlOptions: { style: google.maps.ZoomControlStyle.LARGE, position: google.maps.ControlPosition.RIGHT_CENTER }, streetViewControl: true, streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_CENTER } };
+    // http://stackoverflow.com/questions/8483023/uncaught-typeerror-cannot-set-property-position-of-undefined
+    googleMap = new google.maps.Map($('#map_canvas')[0], mapOpt); // !!! global
+    // http://googlemaps.googlermania.com/google_maps_api_v3/ja/map_example_singleInfoWindow.html
+    google.maps.event.addListener(googleMap, 'click', function(event) { closeInfoWindow(); });
 
-	var currentPositionDiv = $('<div />').html('&#9673;').attr('title', 'Go to current position').attr('id', 'current_position'); // &#9673; == http://ja.wikipedia.org/wiki/%E8%9B%87%E3%81%AE%E7%9B%AE
-	google.maps.event.addDomListener(currentPositionDiv[0], 'click', moveToCurrentPosition);
-	googleMap.controls[google.maps.ControlPosition.RIGHT_TOP].push(currentPositionDiv[0]);
+    var currentPositionDiv = $('<div />').html('&#9673;').attr('title', 'Go to current position').attr('id', 'current_position'); // &#9673; == http://ja.wikipedia.org/wiki/%E8%9B%87%E3%81%AE%E7%9B%AE
+    google.maps.event.addDomListener(currentPositionDiv[0], 'click', moveToCurrentPosition);
+    googleMap.controls[google.maps.ControlPosition.RIGHT_TOP].push(currentPositionDiv[0]);
 
-	moveToCurrentPosition();
+    moveToCurrentPosition();
 
-	showAllPortals();
-   	showStatus();
+    showAllPortals();
+    showStatus();
+  });
 });
 
 $(window).load(function() {
@@ -168,7 +178,7 @@ function showPortal(stats) {
 	var daysTable = '<table><thead><tr><td>Day</td><td title="Unique users per hour">U</td><td title="Damages">#</td></tr></thead><tbody>' + days.sort(function(a, b) { return a[0] - b[0]; }).map(function(item) { return (-1 == latestDays.indexOf(item[0]) ? '<tr>' : '<tr class="tr_highlight">') + '<td>' + toWeekDay(item[0]) + '</td><td class="td_number">' + item[1] + '</td><td class="td_number">' + item[2] + '</td></tr>'; }).join('') + '</tbody></table>';
 	var content = $('<div />').append($('<h3 />').html(portalName + (isUPC ? ' (<span style="color: red">UPC</span>)' : ''))).append($('<a />').addClass('portal_info').attr('href', intelUrl).attr('target', '_blank').append($('<img />').attr({ 'no_load_src': portalImageUrl }).addClass('portal_img'))).append($('<div />').addClass('portal_info').html(enemyTable)).append($('<div />').addClass('portal_info').html(hoursTable)).append($('<div />').addClass('portal_info').html(daysTable));
 
-	var iconOpt = { path: isLatest ? google.maps.SymbolPath.BACKWARD_CLOSED_ARROW : google.maps.SymbolPath.CIRCLE, scale: isLatest ? 5 : 10, fillColor: color, fillOpacity: 0.4, strokeColor: color, strokeWeight: 2, strokeOpacity: 0.8 };
+	var iconOpt = { path: isLatest ? google.maps.SymbolPath.BACKWARD_CLOSED_ARROW : google.maps.SymbolPath.CIRCLE, scale: isLatest ? 3 : 5, fillColor: color, fillOpacity: 0.4, strokeColor: color, strokeWeight: 2, strokeOpacity: 0.8 };
 	// var iconOpt = 'http://commondatastorage.googleapis.com/ingress.com/img/map_icons/marker_images/hum_8res.png';
 	var marker = new google.maps.Marker({ position: new google.maps.LatLng(latitude, longitude), map: googleMap, title: titleText, icon: iconOpt, zIndex: 10 });
 	markers.push(marker); // global!!!
@@ -210,7 +220,7 @@ function generateEnemyTable(enemyNames, latestEnemyNames) {
 }
 
 function showMessage(mesg) {
-	console.log(mesg);
+  console.log(new Date().toJSON() + ":" + mesg);
 	$('#content').html(mesg + '<br />');
 }
 
@@ -239,241 +249,281 @@ function gmailList(pageToken, loop, ids, progressFunc, doneFunc) {
 }
 
 function gmailGet(ids, progressFunc, doneFunc) {
-	if (!ids || 0 == ids.length) {
-		doneFunc(ids, null);
-		return;
-	}
-	var head = ids.slice(0, maxResults);
-	var rest = ids.slice(maxResults);
-	var batch = gapi.client.newBatch();
-	head.forEach(function(id) {
-		batch.add(gapi.client.gmail.users.messages.get({ userId: userId, id: id, fields: 'payload(headers,parts/body)' }), { id: id });
-	});
-	showMessage('Loading mail body from Gmail... (' + ids.length + ')');
-	batch.then(function(response) {
-		progressFunc(head, response)
-		gmailGet(rest, progressFunc, doneFunc); // recursive!!!
-	}, function(response) {
-		console.error({ func: 'gmailGet', error: response.result.error.message });
-	}, this);
+  if (!ids || 0 == ids.length) {
+    persistDatabase(function(){
+      doneFunc(ids, null);
+    });
+    return;
+  }
+  var head = ids.slice(0, maxResults);
+  var rest = ids.slice(maxResults);
+  var batch = gapi.client.newBatch();
+  head.forEach(function(id) {
+    batch.add(gapi.client.gmail.users.messages.get({ userId: userId, id: id, fields: 'payload(headers,parts/body)' }), { id: id });
+  });
+  showMessage('Loading mail body from Gmail... (' + ids.length + ')');
+  batch.then(function(response) {
+    progressFunc(head, response)
+    gmailGet(rest, progressFunc, doneFunc); // recursive!!!
+  }, function(response) {
+    console.error({ func: 'gmailGet', error: response.result.error.message });
+  }, this);
 }
 
 ///
 /// reports
 ///
-function initLocalStorage() {
-	var v = localStorage.getItem(generateConfigId('version'));
-	if (v && 'string' === typeof v && v == version) {
-		// same version
-		// do nothing
-	} else {
-		showMessage('Updating localStorage... (' + v + ' to ' + version + ')');
-		localStorage.clear();
-		localStorage.setItem(generateConfigId('version'), version);
-	}
+function initLocalStorage(doneFunc) {
+  readDatabase(doneFunc);
 }
 
 function reportsLength() {
-	var len = 0;
-	for (var i = 0; i < localStorage.length; i++){
-		if (isReportId(localStorage.key(i))) len++;
-	}
-	return len;
+  return Object.keys(reportsDB).length;
 }
 
 function portalsLength() {
-	var len = 0;
-	for (var i = 0; i < localStorage.length; i++){
-		if (isPortalId(localStorage.key(i))) len++;
-	}
-	return len;
+  return Object.keys(portalsDB).length;
 }
 
 function saveReport(reportId, time, latitude, longitude, agentName, agentFaction, agentLevel, ownerName, ownerFaction, enemyName, enemyFaction) {
-	if (isReportId(reportId)) {
-		//var dummy = ''; // dummy big data
-		//for (var i = 0; i < 500 * 1024; i++) {
-		//	dummy += 'x';
-		//}
-		//report['dummy'] = dummy;
-		var jsonString = JSON.stringify([time, reportId, latitude, longitude, agentName, agentFaction, agentLevel, ownerName, ownerFaction, enemyName, enemyFaction]);
-		try {
-			localStorage.setItem(reportId, jsonString);
-			return true;
-		} catch (e) { // QUOTA_EXCEEDED_ERR
-			// http://chrisberkhout.com/blog/localstorage-errors/
-			console.error({ func: 'saveReport', error: 'failed to setItem (first)', e: e, reportId: reportId, jsonString: jsonString });
-			showMessage('Removing old reports... (' + maxResults + ')');
-			removeOldReports(maxResults);
-			try {
-				localStorage.setItem(reportId, jsonString);
-				return true;
-			} catch (e) {
-				console.error({ func: 'saveReport', error: 'failed to setItem (retry)', e: e, reportId: reportId, jsonString: jsonString });
-			}
-			return false;
-		}
-		return true;
-	} else {
-		console.error({ func: 'saveReport', error: 'invalid value', reportId: reportId });
-		return false;
-	}
-}
-
-function savePortal(latitude, longitude, time, portalName, portalImageUrl) {
-	var oldPortal = localStorage.getItem(generatePortalId(latitude, longitude));
-	if (oldPortal && 'string' === typeof oldPortal && 0 < oldPortal.length) {
-		var portal = JSON.parse(oldPortal);
-		if (time < portal[0]) {
-			return false;
-		}
-	}
-	var newPortal = JSON.stringify([time, latitude, longitude, portalName, portalImageUrl]);
-	try {
-		localStorage.setItem(generatePortalId(latitude, longitude), newPortal);
-		return true;
-	} catch (e) { // QUOTA_EXCEEDED_ERR
-		// http://chrisberkhout.com/blog/localstorage-errors/
-		console.error({ func: 'savePortal', error: 'failed to setItem (first)', e: e, latitude: latitude, longitude: longitude, newPortal: newPortal });
-		showMessage('Removing old reports... (' + maxResults + ')');
-		removeOldReports(maxResults);
-		try {
-			localStorage.setItem(generatePortalId(latitude, longitude), newPortal);
-			return true;
-		} catch (e) {
-			console.error({ func: 'savePortal', error: 'failed to setItem (retry)', e: e, latitude: latitude, longitude: longitude, newPortal: newPortal });
-		}
-		return false;
-	}
-	return true;
-}
-
-function removeOldReports(count) {
-	var keys = range(0, Math.min(count, reportsLength())).map(function(i) { return localStorage.key(i); }).filter(isReportId);
-	keys.forEach(function(k) {
-		var v = localStorage.getItem(k);
-		// console.log({ func: 'removeOldReports', k: k, v: (v ? v.length : v) });
-		localStorage.removeItem(k);
-	});
+  var report = {
+    rid: reportId,
+    time: time,
+    reportId: reportId,
+    latitude: latitude,
+    longitude: longitude,
+    agentName: agentName,
+    agentFaction: agentFaction,
+    agentLevel: agentLevel,
+    ownerName: ownerName,
+    ownerFaction: ownerFaction,
+    enemyName: enemyName,
+    enemyFaction: enemyFaction,
+    dirty: true
+  };
+  reportsDB[reportId] = report;
+  return true;
 }
 
 function loadReport(reportId) {
-	var jsonString = localStorage.getItem(reportId);
-	if (jsonString && 'string' === typeof jsonString && 0 < jsonString.length) {
-		try {
-			var r = JSON.parse(jsonString);
-			return { time: r[0], reportId: r[1], latitude: r[2], longitude: r[3], agentName: r[4], agentFaction: r[5], agentLevel: r[6], ownerName: r[7], ownerFaction: r[8], enemyName: r[9], enemyFaction: r[10] };
-		} catch (e) {
-			console.error({ func: 'loadReport', error: 'falied to parse JSON', reportId: reportId, jsonString: jsonString });
-			return null;
-		}
-	} else {
-		console.error({ func: 'loadReport', error: 'invalid value', reportId: reportId, jsonString: jsonString });
-		return null;
-	}
+  if (reportsDB[reportId]) {
+    return reportsDB[reportId];
+  } else {
+    return null;
+  }
+}
+
+function removeOldReports(count) {
+}
+
+function savePortal(latitude, longitude, time, portalName, portalImageUrl) {
+  var pid = generatePortalId(latitude, longitude);
+  var oldPortal = portalsDB[pid];
+  if (oldPortal) {
+    if (time < oldPortal.time) {
+      return false;
+    }
+  }
+  var newPortal = {
+    pid: pid,
+    time: time,
+    latitude: latitude,
+    longitude: longitude,
+    portalName: portalName,
+    portalImageUrl: portalImageUrl,
+    dirty: true
+  };
+  portalsDB[pid] = newPortal;
+  return true;
 }
 
 function loadPortal(latitude, longitude) {
-	var jsonString = localStorage.getItem(generatePortalId(latitude, longitude));
-	if (jsonString && 'string' === typeof jsonString && 0 < jsonString.length) {
-		try {
-			var r = JSON.parse(jsonString);
-			return { time: r[0], latitude: r[1], longitude: r[2], portalName: r[3], portalImageUrl: r[4] };
-		} catch (e) {
-			console.error({ func: 'loadPortal', error: 'falied to parse JSON', latitude: latitude, longitude: longitude, jsonString: jsonString });
-			return null;
-		}
-	} else {
-		console.error({ func: 'loadPortal', error: 'invalid value', latitude: latitude, longitude: longitude, jsonString: jsonString });
-		return null;
-	}
+  var pid = generatePortalId(latitude, longitude);
+  if (portalsDB[pid]) {
+    return portalsDB[pid];
+  } else {
+    return null;
+  }
 }
 
 function isExistReport(reportId) {
-	var jsonString = localStorage.getItem(reportId);
-	return jsonString && 'string' === typeof jsonString && 0 < jsonString.length;
+  var report = reportsDB[reportId];
+  return !!report;
 }
 
 function generateReportId(gmailId, n) {
-	return 'a/' + gmailId + '/' + ('00' + n).substr(-2);
+  return 'a/' + gmailId + '/' + ('00' + n).substr(-2);
 }
 
 function generatePortalId(latitude, longitude) {
-	return 'p/' + latitude + ',' + longitude;
-}
-
-function generateConfigId(config) {
-	return 'z/' + config;
-}
-
-function isReportId(id) {
-	return id && 'string' === typeof id && 0 == id.indexOf('a/');
-}
-
-function isPortalId(id) {
-	return id && 'string' === typeof id && 0 == id.indexOf('p/');
-}
-
-function isConfigId(id) {
-	return id && 'string' === typeof id && 0 == id.indexOf('z/');
+  return 'p/' + latitude + ',' + longitude;
 }
 
 function loadAllReports() {
-	var reports = [];
-	for (var i = 0; i < localStorage.length; i++){
-		var id = localStorage.key(i);
-		if (isReportId(id)) {
-			var report = loadReport(id);
-			if (null != report) {
-				reports.push(report);
-			} else {
-				localStorage.removeItem(id);
-			}
-		}
-	}
-	return reports;
+  return Object.keys(reportsDB).map(function(k){return reportsDB[k];});
+}
+
+function persistDatabase(doneFunc) {
+  console.log("persisting database");
+  var reportsToSave = [];
+  Object.keys(reportsDB).forEach(function(rid) {
+    if (reportsDB[rid].dirty) {
+      reportsToSave.push(reportsDB[rid]);
+    }
+  });
+  var portalsToSave = [];
+  Object.keys(portalsDB).forEach(function(pid) {
+    if (portalsDB[pid].dirty) {
+      portalsToSave.push(portalsDB[pid]);
+    }
+  });
+  persistLoop(reportsToSave, portalsToSave, doneFunc);
+}
+
+function persistLoop(reportsToSave, portalsToSave, doneFunc) {
+  if (reportsToSave.length == 0 && portalsToSave.length == 0) {
+    showMessage("Database saved");
+    setTimeout(doneFunc, 10);
+    return;
+  }
+  showMessage("Saving reports(" + reportsToSave.length + "), portals(" + portalsToSave.length + ")");
+  if (portalsToSave.length > 0) {
+    var head = portalsToSave.slice(0, maxResults);
+    var rest = portalsToSave.slice(maxResults);
+    var transaction = db.transaction(["portals"], "readwrite");
+    transaction.oncomplete = function() {
+      persistLoop(reportsToSave, rest, doneFunc);
+    };
+    transaction.onerror = function(){showMessage("Database Save Error")};
+    var objectStore = transaction.objectStore("portals");
+    for (var i in head) {
+      var request = objectStore.put(head[i]);
+      request.onsuccess = function(event) {
+        head[i].dirty = false;
+      }
+    }
+  } else {
+    var head = reportsToSave.slice(0, maxResults);
+    var rest = reportsToSave.slice(maxResults);
+    var transaction = db.transaction(["reports"], "readwrite");
+    transaction.oncomplete = function() {
+      persistLoop(rest, portalsToSave, doneFunc);
+    };
+    transaction.onerror = function(){showMessage("Database Save Error")};
+    var objectStore = transaction.objectStore("reports");
+    for (var i in head) {
+      var request = objectStore.put(head[i]);
+      request.onsuccess = function(event) {
+        head[i].dirty = false;
+      }
+    }
+  }
+}
+
+function readDatabase(doneFunc) {
+  console.log("open database...");
+  window.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+  window.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+  window.IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange || window.msIDBKeyRange;
+
+  var DBOpenRequest = window.indexedDB.open(dbName, 2);
+
+  DBOpenRequest.onerror = function(event) {
+    showMessage("Error loading database");
+  };
+
+  DBOpenRequest.onsuccess = function(event) {
+    console.log("database opened.");
+    db = DBOpenRequest.result;
+    readReports(function(){readPortals(doneFunc)});
+  };
+
+  DBOpenRequest.onupgradeneeded = function(event) {
+    var db = event.target.result;
+
+    db.onerror = function(event) {
+      showMessage("Error loading database");
+    };
+
+    var reportStore = db.createObjectStore("reports", { keyPath: "rid" });
+    var portalStore = db.createObjectStore("portals", { keyPath: "pid" });
+
+    reportStore.transaction.oncomplete = function(event) {
+      console.log("reportStore created");
+    };
+    portalStore.transaction.oncomplete = function(event) {
+      console.log("portalStore created");
+    };
+  };
+}
+
+function readReports(doneFunc) {
+  var count = 0;
+  var objectStore = db.transaction('reports').objectStore('reports');
+  objectStore.openCursor().onsuccess = function(event) {
+    var cursor = event.target.result;
+    if (cursor) {
+      var report = cursor.value;
+      report.dirty = false;
+      reportsDB[report.rid] = report;
+      if (++count % 100 == 0) {
+        showMessage("Loading reports (" + count + ")");
+      }
+      cursor.continue();
+    } else {
+      showMessage("Loading reports done (" + count + ")");
+      doneFunc();
+    }
+  };
+}
+
+function readPortals(doneFunc) {
+  var count = 0;
+  var objectStore = db.transaction('portals').objectStore('portals');
+  objectStore.openCursor().onsuccess = function(event) {
+    var cursor = event.target.result;
+    if (cursor) {
+      var portal = cursor.value;
+      portal.dirty = false;
+      portalsDB[portal.pid] = portal;
+      if (++count % 100 == 0) {
+        showMessage("Loading portals (" + count + ")");
+      }
+      cursor.continue();
+    } else {
+      showMessage("Loading portals done (" + count + ")");
+      setTimeout(doneFunc, 1000);
+    }
+  };
 }
 
 function printLocalStorage() {
-	for (var i = 0; i < localStorage.length; i++){
-	// for (var i = localStorage.length - 1; i >= 0; i--){
-		var k = localStorage.key(i);
-		var v = localStorage.getItem(k);
-		// console.log([i, k, v ? v.length : v]);
-		console.log([i, k, v]);
-	}
+  printReports();
+  printPortals();
 }
 
 function printPortals(pattern) {
-	var portals = [];
-	for (var i = 0; i < localStorage.length; i++){
-		var k = localStorage.key(i);
-		if (isPortalId(k)) {
-			var v = localStorage.getItem(k);
-			if (!pattern || v.match(pattern)) {
-				portals.push(JSON.parse(v));
-			}
-		}
-	}
-	portals.forEach(function(portal) {
-		console.log(portal.map(escapeCSV).join(',') + ',');
-	});
+  var pk = Object.keys(portalsDB);
+  var pl = pk.length
+  for (var i = 0; i < pl; i++){
+    var k = pk[i];
+    var v = portalsDB[k];
+    if (!pattern || JSON.stringify(v).match(pattern)) {
+      console.log([i, k, v]);
+    }
+  }
 }
 
 function printReports(pattern) {
-	var reports = [];
-	for (var i = 0; i < localStorage.length; i++){
-		var k = localStorage.key(i);
-		if (isReportId(k)) {
-			var v = localStorage.getItem(k);
-			if (!pattern || v.match(pattern)) {
-				reports.push(JSON.parse(v));
-			}
-		}
-	}
-	reports.forEach(function(portal) {
-		console.log(portal.map(escapeCSV).join(',') + ',');
-	});
+  var rk = Object.keys(reportsDB);
+  var rl = rk.length
+  for (var i = 0; i < rl; i++){
+    var k = rk[i];
+    var v = reportsDB[k];
+    if (!pattern || JSON.stringify(v).match(pattern)) {
+      console.log([i, k, v]);
+    }
+  }
 }
 
 function escapeCSV(item) {
@@ -760,6 +810,8 @@ function checkPortalImageUrl(portaImageUrl) {
 		return portaImageUrl;
 	} else if (portaImageUrl.match(/^http:\/\/www\.panoramio\.com\/photos\/small\/[\d]+\.jpg$/)) {
 		return portaImageUrl;
+	} else if (portaImageUrl.match(/^http:\/\/lh\d+.googleusercontent.com\/[\w\d\-\_]+$/)) {
+		return portaImageUrl;
 	} else {
 		console.error({ func: 'checkPortalImageUrl', error: 'Unknown format (portal image url)', portalImageUrl: portaImageUrl });
 		// return '__UNKNOWN__';
@@ -901,4 +953,40 @@ function urlsafe_b64_to_utf8(str) {
 		str += '=';
 	}
 	return b64_to_utf8(str);
+}
+
+function getUrlVars() {
+    var vars = [], hash;
+    var hashes = window.location.href.slice(window.location.href.indexOf('?') + 1).split('&');
+    for(var i = 0; i < hashes.length; i++) {
+        hash = hashes[i].split('=');
+        vars.push(hash[0]);
+        vars[hash[0]] = hash[1];
+    }
+    return vars;
+}
+
+function parseOptions() {
+  var params = getUrlVars();
+  if (params.limit) {
+    maxLoop = params.limit;
+  }
+  if (params.ll) {
+    var ll = params.ll.split(",");
+    try {
+      if (+ll[0]) {
+        lat = +ll[0];
+      }
+      if (+ll[1]) {
+        lng = +ll[1];
+      }
+    } catch(e) {
+    }
+  }
+  if (params.z) {
+    try {
+      zoom = +params.z;
+    } catch(e) {
+    }
+  }
 }
